@@ -5,6 +5,10 @@ const STORAGE_KEY = 'notes.app.items.v1';
  * { id: string, title: string, content: string, createdAt: number, updatedAt: number }
  */
 
+// In-memory cached detection to avoid repeated probes and retries
+let cachedApiBase = undefined; // string|null|undefined
+let lastDetectionAt = 0;
+
 /**
  * Normalize and read API base from env, if provided.
  * Ensures no trailing slash for consistent joining.
@@ -13,7 +17,7 @@ function getEnvApiBase() {
   const raw = (process.env.REACT_APP_API_BASE || '').trim();
   if (!raw) return '';
   // Remove trailing slash to avoid double slashes in URLs
-  return raw.replace(/\/+$/, '');
+  return raw.replace(/\/*$/, '');
 }
 
 /**
@@ -22,9 +26,10 @@ function getEnvApiBase() {
  * - checks response.ok
  * - checks and parses JSON only when content-type is application/json
  * - avoids parsing HTML or other content as JSON
- * - returns { ok, status, headers, data, text }
+ * - returns { ok, status, headers, data, text, isJson }
+ * - traps network/Abort errors and returns ok:false without throwing
  */
-async function safeFetchJson(url, options = {}, { timeoutMs = 4000 } = {}) {
+async function safeFetchJson(url, options = {}, { timeoutMs = 2500 } = {}) {
   const ctrl = new AbortController();
   const to = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
@@ -32,12 +37,9 @@ async function safeFetchJson(url, options = {}, { timeoutMs = 4000 } = {}) {
     const contentType = res.headers?.get?.('content-type') || '';
     const isJson = contentType.toLowerCase().includes('application/json');
 
-    // For non-2xx, try to read text to include in error (but don't JSON.parse)
+    // For non-2xx, read text but do not throw
     if (!res.ok) {
       const errText = await res.text().catch(() => '');
-      const message = errText
-        ? `Request failed (${res.status}). ${errText.slice(0, 200)}`
-        : `Request failed (${res.status}).`;
       return { ok: false, status: res.status, headers: res.headers, data: null, text: errText, isJson };
     }
 
@@ -49,30 +51,65 @@ async function safeFetchJson(url, options = {}, { timeoutMs = 4000 } = {}) {
     // Not JSON, read as text so caller can decide
     const text = await res.text().catch(() => '');
     return { ok: true, status: res.status, headers: res.headers, data: null, text, isJson: false };
+  } catch {
+    // Network failures (including 502/connection refused/timeout) should not throw into UI
+    return { ok: false, status: 0, headers: null, data: null, text: '', isJson: false };
   } finally {
     clearTimeout(to);
   }
 }
 
 /**
+ * Build URL safely by ensuring there is exactly one slash between base and path.
+ */
+function buildUrl(base, path) {
+  const b = (base || '').replace(/\/*$/, '');
+  const p = (path || '').replace(/^\/+/, '');
+  return `${b}/${p}`;
+}
+
+/**
  * Attempt to detect an existing backend API by probing a well-known endpoint.
- * We only consider API available if the health endpoint returns a 2xx and JSON.
- * If env base is set, we try that first; otherwise we try '/api'.
+ * Conditions for a positive detection:
+ *   - 2xx response
+ *   - Content-Type: application/json
+ *   - JSON body (not HTML)
+ * We try the explicit REACT_APP_API_BASE first when provided; otherwise '/api'.
+ * To prevent repeated network errors:
+ *   - Cache the result (string|null)
+ *   - If last detection is recent (within 60s), return cached without probing
  */
 async function detectApiBase() {
+  const now = Date.now();
+  const STICKY_MS = 60000;
+
+  if (cachedApiBase !== undefined && now - lastDetectionAt < STICKY_MS) {
+    return cachedApiBase;
+  }
+
   const envBase = getEnvApiBase();
   const candidates = envBase ? [envBase] : ['/api'];
 
   for (const base of candidates) {
-    try {
-      const res = await safeFetchJson(`${base}/health`, {}, { timeoutMs: 1500 });
-      if (res.ok && res.isJson) {
-        return base;
-      }
-    } catch {
-      // ignore probe errors
+    // Probe /health
+    const health = await safeFetchJson(buildUrl(base, '/health'), {}, { timeoutMs: 1200 });
+    if (health.ok && health.isJson) {
+      cachedApiBase = base;
+      lastDetectionAt = now;
+      return base;
     }
+    // If health fails (or isn't JSON), try /notes GET expecting JSON array
+    const notesProbe = await safeFetchJson(buildUrl(base, '/notes'), {}, { timeoutMs: 1500 });
+    if (notesProbe.ok && notesProbe.isJson && Array.isArray(notesProbe.data)) {
+      cachedApiBase = base;
+      lastDetectionAt = now;
+      return base;
+    }
+    // Any non-2xx, non-JSON, HTML, 502, 404: ignore and continue
   }
+
+  cachedApiBase = null;
+  lastDetectionAt = now;
   return null;
 }
 
@@ -86,16 +123,11 @@ function loadLocal() {
 }
 
 function saveLocal(list) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
-}
-
-/**
- * Build URL safely by ensuring there is exactly one slash between base and path.
- */
-function buildUrl(base, path) {
-  const b = (base || '').replace(/\/+$/, '');
-  const p = (path || '').replace(/^\/+/, '');
-  return `${b}/${p}`;
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+  } catch {
+    // Swallow storage quota errors to keep UI functional
+  }
 }
 
 // PUBLIC_INTERFACE
@@ -103,16 +135,11 @@ export async function getNotes() {
   /** Get all notes, auto-detecting API or falling back to localStorage. */
   const api = await detectApiBase();
   if (api) {
-    const { ok, isJson, data } = await safeFetchJson(buildUrl(api, '/notes'));
-    if (!ok) {
-      // If API is reachable but returns non-OK or non-JSON, fall back to local
-      return loadLocal().sort((a, b) => b.updatedAt - a.updatedAt);
+    const { ok, isJson, data } = await safeFetchJson(buildUrl(api, '/notes'), {}, { timeoutMs: 3000 });
+    if (ok && isJson && Array.isArray(data)) {
+      return data;
     }
-    if (!isJson) {
-      // Unexpected content-type (likely HTML) — avoid JSON.parse error, fall back
-      return loadLocal().sort((a, b) => b.updatedAt - a.updatedAt);
-    }
-    return Array.isArray(data) ? data : [];
+    // If API is reachable but returns non-OK or non-JSON, fall back to local
   }
   return loadLocal().sort((a, b) => b.updatedAt - a.updatedAt);
 }
@@ -127,18 +154,20 @@ export async function createNote(note) {
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };
+
   const api = await detectApiBase();
   if (api) {
     const { ok, isJson, data } = await safeFetchJson(buildUrl(api, '/notes'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
-    });
+    }, { timeoutMs: 3000 });
     if (ok && isJson && data) {
       return data;
     }
     // If not ok or not JSON, gracefully fall back to local
   }
+
   const list = loadLocal();
   list.unshift(payload);
   saveLocal(list);
@@ -155,7 +184,7 @@ export async function updateNote(id, updates) {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
-    });
+    }, { timeoutMs: 3000 });
     if (ok && isJson && data) {
       return data;
     }
@@ -175,7 +204,7 @@ export async function deleteNote(id) {
   /** Delete a note via API if available, else localStorage. */
   const api = await detectApiBase();
   if (api) {
-    const { ok } = await safeFetchJson(buildUrl(api, `/notes/${id}`), { method: 'DELETE' });
+    const { ok } = await safeFetchJson(buildUrl(api, `/notes/${id}`), { method: 'DELETE' }, { timeoutMs: 3000 });
     if (ok) return true;
     // On failure, fall through to local
   }

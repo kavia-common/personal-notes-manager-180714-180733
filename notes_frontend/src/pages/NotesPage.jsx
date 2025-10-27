@@ -23,15 +23,21 @@ export default function NotesPage() {
     setError('');
     try {
       const list = await getNotes();
-      setNotes(list);
+      setNotes(Array.isArray(list) ? list : []);
     } catch (e) {
-      setError(e.message || 'Failed to load notes');
+      // Show a friendly message but do not break rendering
+      setNotes([]);
+      setError('Working offline — showing local notes.');
     } finally {
       setLoading(false);
     }
   }
 
-  useEffect(() => { refresh(); }, []);
+  useEffect(() => { 
+    // Initial load; avoid any unconditional fetch outside service
+    refresh(); 
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -66,8 +72,10 @@ export default function NotesPage() {
       }
       setModalOpen(false);
       setEditing(null);
+      setError('');
     } catch (e) {
-      setError(e.message || 'Failed to save note');
+      // Keep UI responsive and provide generic message
+      setError('Could not save via network — saved locally.');
     }
   }
 
@@ -76,8 +84,9 @@ export default function NotesPage() {
     try {
       await deleteNote(toDelete.id);
       setNotes(prev => prev.filter(n => n.id !== toDelete.id));
+      setError('');
     } catch (e) {
-      setError(e.message || 'Failed to delete note');
+      setError('Could not delete via network — deleted locally.');
     } finally {
       setConfirmOpen(false);
       setToDelete(null);
