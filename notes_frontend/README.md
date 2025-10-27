@@ -1,82 +1,33 @@
-# Lightweight React Template for KAVIA
+# Notes Frontend (Ocean Professional)
 
-This project provides a minimal React template with a clean, modern UI and minimal dependencies.
+A modern, lightweight React notes app where users can create, view, edit, and delete personal notes.
 
 ## Features
 
-- **Lightweight**: No heavy UI frameworks - uses only vanilla CSS and React
-- **Modern UI**: Clean, responsive design with KAVIA brand styling
-- **Fast**: Minimal dependencies for quick loading times
-- **Simple**: Easy to understand and modify
+- CRUD notes with localStorage persistence
+- Auto-detects backend API at `/api` (via `/api/health`) and uses it if available
+- Ocean Professional theme: primary #2563EB, secondary/success #F59E0B, error #EF4444
+- Responsive grid of note cards with subtle gradients and rounded corners
+- Modal dialogs for create/edit and confirm delete
+- Simple search filter
+- Minimal dependencies (pure React + CSS)
 
 ## Getting Started
 
-In the project directory, you can run:
+- `npm start` — Start development server at http://localhost:3000
+- `npm test` — Run test watcher
+- `npm run build` — Build for production
 
-### `npm start`
+## Configuration
 
-Runs the app in development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+- Optional: `REACT_APP_API_BASE` — Set API base URL if different from `/api`
+  - See `.env.example`
 
-### `npm test`
+If no API is reachable, the app falls back to localStorage automatically.
 
-Launches the test runner in interactive watch mode.
+## Structure
 
-### `npm run build`
-
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
-
-## Customization
-
-### Colors
-
-The main brand colors are defined as CSS variables in `src/App.css`:
-
-```css
-:root {
-  --kavia-orange: #E87A41;
-  --kavia-dark: #1A1A1A;
-  --text-color: #ffffff;
-  --text-secondary: rgba(255, 255, 255, 0.7);
-  --border-color: rgba(255, 255, 255, 0.1);
-}
-```
-
-### Components
-
-This template uses pure HTML/CSS components instead of a UI framework. You can find component styles in `src/App.css`. 
-
-Common components include:
-- Buttons (`.btn`, `.btn-large`)
-- Container (`.container`)
-- Navigation (`.navbar`)
-- Typography (`.title`, `.subtitle`, `.description`)
-
-## Learn More
-
-To learn React, check out the [React documentation](https://reactjs.org/).
-
-### Code Splitting
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
-
-### Analyzing the Bundle Size
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
-
-### Making a Progressive Web App
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+- `src/services/notesService.js` — API/localStorage abstraction
+- `src/pages/NotesPage.jsx` — Main page with grid and modals
+- `src/components/*` — UI components
+- `src/theme.css` — Ocean Professional theme styles
